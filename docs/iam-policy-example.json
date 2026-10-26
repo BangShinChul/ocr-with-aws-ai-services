@@ -1,0 +1,58 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "WhoAmI",
+      "Effect": "Allow",
+      "Action": "sts:GetCallerIdentity",
+      "Resource": "*"
+    },
+    {
+      "Sid": "Textract",
+      "Effect": "Allow",
+      "Action": [
+        "textract:DetectDocumentText",
+        "textract:AnalyzeDocument",
+        "textract:StartDocumentTextDetection",
+        "textract:GetDocumentTextDetection",
+        "textract:StartDocumentAnalysis",
+        "textract:GetDocumentAnalysis"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "BedrockClaude",
+      "Effect": "Allow",
+      "Action": ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
+      "Resource": [
+        "arn:aws:bedrock:*:*:inference-profile/*.anthropic.claude-*",
+        "arn:aws:bedrock:*::foundation-model/anthropic.claude-*",
+        "arn:aws:bedrock:::foundation-model/anthropic.claude-*"
+      ]
+    },
+    {
+      "Sid": "BedrockListProfilesForSetupCheck",
+      "Effect": "Allow",
+      "Action": "bedrock:ListInferenceProfiles",
+      "Resource": "*"
+    },
+    {
+      "Sid": "DemoBucketOnlyForPdfAndBda",
+      "Effect": "Allow",
+      "Action": ["s3:PutObject", "s3:GetObject", "s3:ListBucket", "s3:GetBucketLocation"],
+      "Resource": ["arn:aws:s3:::REPLACE_WITH_BUCKET", "arn:aws:s3:::REPLACE_WITH_BUCKET/*"]
+    },
+    {
+      "Sid": "BedrockDataAutomationOptional",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:InvokeDataAutomationAsync",
+        "bedrock:GetDataAutomationStatus",
+        "bedrock:ListDataAutomationProjects",
+        "bedrock:CreateBlueprint",
+        "bedrock:DeleteBlueprint"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

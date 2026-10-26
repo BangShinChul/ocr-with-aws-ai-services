@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.venv/
+Config
+.DS_Store
+
+# Local settings written by setup (AWS profile, Region, bucket)
+.env
+
+# Your documents, answers and results never go into git
+data/images/*
+data/schema/*
+data/truth/*
+!data/**/.gitkeep
+results/

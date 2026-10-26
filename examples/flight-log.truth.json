@@ -1,0 +1,15 @@
+{
+  "log_no": "000123",
+  "aircraft_reg": "HL0000",
+  "date": "01-JAN-26",
+  "captain_name": "홍길동",
+  "legs": [
+    {"leg": 1, "flight_no": "AB 101", "from": "ICN", "to": "NRT", "block_out": "0900", "block_in": "1115",
+     "block_time": "2+15", "fuel_departure": 9000, "fuel_arrival": 4200, "fuel_burn": 4800},
+    {"leg": 2, "flight_no": "AB 102", "from": "NRT", "to": "ICN", "block_out": "1230", "block_in": "1500",
+     "block_time": "2+30", "fuel_departure": 8800, "fuel_arrival": 3700, "fuel_burn": 5100}
+  ],
+  "airframe_hours": {"prev_hours": 1000, "prev_minutes": 20, "today_hours": 4, "today_minutes": 45,
+                     "total_hours": 1005, "total_minutes": 5},
+  "released_by_stamp": true
+}

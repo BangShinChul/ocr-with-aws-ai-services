@@ -1,0 +1,51 @@
+{
+  "type": "object",
+  "description": "Example aircraft flight log. Replace field names and descriptions with your own form. Read handwriting exactly as written; return null for blank cells.",
+  "properties": {
+    "log_no": {"type": "string", "description": "Printed log page number at the top right"},
+    "aircraft_reg": {"type": "string", "description": "Aircraft registration, e.g. HL0000"},
+    "date": {"type": "string", "description": "DD-MMM-YY with the month in English capitals, e.g. 01-JAN-26"},
+    "captain_name": {"type": "string", "description": "Handwritten name in the CAPT box, in the original script (Hangul stays Hangul)"},
+    "legs": {
+      "type": "array",
+      "description": "One item per filled row in the flight table, top to bottom",
+      "items": {
+        "type": "object",
+        "properties": {
+          "leg": {"type": "integer"},
+          "flight_no": {"type": "string", "description": "Airline code + number, e.g. AB 123"},
+          "from": {"type": "string", "description": "3-letter IATA code"},
+          "to": {"type": "string", "description": "3-letter IATA code"},
+          "block_out": {"type": "string", "description": "HHMM, 4 digits, no colon"},
+          "block_in": {"type": "string", "description": "HHMM, 4 digits, no colon"},
+          "block_time": {"type": "string", "description": "H+MM, e.g. 1+45"},
+          "fuel_departure": {"type": "integer", "description": "kg"},
+          "fuel_arrival": {"type": "integer", "description": "kg"},
+          "fuel_burn": {"type": "integer", "description": "kg"}
+        }
+      }
+    },
+    "airframe_hours": {
+      "type": "object",
+      "description": "Hours and minutes are written in two boxes split by a vertical line",
+      "properties": {
+        "prev_hours": {"type": "integer"}, "prev_minutes": {"type": "integer"},
+        "today_hours": {"type": "integer"}, "today_minutes": {"type": "integer"},
+        "total_hours": {"type": "integer"}, "total_minutes": {"type": "integer"}
+      }
+    },
+    "released_by_stamp": {"type": "boolean", "description": "true if a stamp is present in the RELEASED BY box"}
+  },
+  "x-validation": [
+    {"name": "Block time (out -> in = block)", "type": "duration", "each": "legs",
+     "start": "block_out", "end": "block_in", "duration": "block_time"},
+    {"name": "Fuel (departure = arrival + burn)", "type": "sum", "each": "legs",
+     "lhs": [["fuel_departure", 1]], "rhs": [["fuel_arrival", 1], ["fuel_burn", 1]]},
+    {"name": "Airframe hours (prev + today = total)", "type": "sum",
+     "lhs": [["airframe_hours.prev_hours", 60], ["airframe_hours.prev_minutes", 1],
+             ["airframe_hours.today_hours", 60], ["airframe_hours.today_minutes", 1]],
+     "rhs": [["airframe_hours.total_hours", 60], ["airframe_hours.total_minutes", 1]]},
+    {"name": "Sum of block times = airframe hours today", "type": "duration_total", "each": "legs",
+     "field": "block_time", "equals": [["airframe_hours.today_hours", 60], ["airframe_hours.today_minutes", 1]]}
+  ]
+}
