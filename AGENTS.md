@@ -9,7 +9,7 @@ documents in **their own AWS account**. Reply in the user's language.
 ## What this repo is
 
 A local web UI (`app.py`, Gradio) and a batch CLI (`evaluate.py`) that run the same document
-through Amazon Textract, Amazon Bedrock (Claude, reading the image directly) and Bedrock Data
+through Amazon Textract, Amazon Bedrock (Claude or GPT, reading the image directly) and Bedrock Data
 Automation, then compare each result with a human-verified truth file.
 
 - Settings: `.env` (written by `scripts/setup_env.py`; see `.env.example`). Non-empty `.env` values

@@ -1,18 +1,18 @@
 # OCR with AWS AI Services — 문서 판독 정확도 PoC 데모
 
-스캔한 문서 한 장을 Amazon Textract, Amazon Bedrock(Claude), Amazon Bedrock Data Automation(BDA)으로 각각 처리해서, **사람이 확인한 정답과 필드별로 비교한 정확도·처리 시간·비용**을 보여주는 도구입니다.
+스캔한 문서 한 장을 Amazon Textract, Amazon Bedrock(Claude·GPT), Amazon Bedrock Data Automation(BDA)으로 각각 처리해서, **사람이 확인한 정답과 필드별로 비교한 정확도·처리 시간·비용**을 보여주는 도구입니다.
 
 - 고객 PC에서 실행하고 **고객 AWS 계정의 API를 호출**합니다. 서버나 웹 서비스를 배포하지 않습니다.
 - 문서는 해당 AWS 계정 밖으로 나가지 않습니다. 이미지는 S3를 거치지 않고, PDF와 BDA만 비공개 S3 버킷을 씁니다.
 - 화면은 `127.0.0.1`(실행한 PC)에서만 열립니다. 로그인 기능이 없으므로 외부에 공개하지 마세요.
 
-> 원본: [aws-samples/ocr-with-aws-ai-services](https://github.com/aws-samples/ocr-with-aws-ai-services) (MIT-0). 최신 Claude 모델, 정답 비교 일괄 평가, 사람 검수 화면, 설치 스크립트를 추가했습니다.
+> 원본: [aws-samples/ocr-with-aws-ai-services](https://github.com/aws-samples/ocr-with-aws-ai-services) (MIT-0). 최신 Claude·GPT 모델, 토큰 기준 비용 기록, 정답 비교 일괄 평가, 사람 검수 화면, 설치 스크립트를 추가했습니다.
 
 ## 준비물
 
 - Python 3.10 이상
 - AWS CLI 프로필 (`aws configure` 또는 `aws configure sso`로 설정)
-- 해당 계정에서 Amazon Bedrock의 Claude 모델 사용이 가능해야 합니다. 필요한 IAM 권한 예시는 [`docs/iam-policy-example.json`](docs/iam-policy-example.json)에 있습니다.
+- 해당 계정에서 Amazon Bedrock의 Claude 모델 사용이 가능해야 합니다. GPT 모델까지 비교하려면 OpenAI 모델 사용도 가능해야 합니다(처음 호출할 때 AWS Marketplace 구독 권한이 필요할 수 있습니다). 필요한 IAM 권한 예시는 [`docs/iam-policy-example.json`](docs/iam-policy-example.json)에 있습니다.
 
 ## 빠른 시작
 
@@ -75,14 +75,17 @@ BDA는 일부 리전에서만 제공됩니다. 서울(ap-northeast-2)에서는 �
 ./run.sh evaluate                                       # Sonnet 5.5, Haiku 5.5, Textract+LLM
 ./run.sh evaluate --engines sonnet opus textract-analyze bda
 ./run.sh evaluate --only scan_01.png --details          # 틀린 필드를 화면에 출력
+./run.sh evaluate --engines sonnet gpt-6.1-terra --repeat 3   # 같은 문서를 3번씩 측정
 ```
+
+선택할 수 있는 엔진은 `opus` `sonnet` `haiku` `gpt-6.1-sol` `gpt-6.1-terra` `gpt-6-astra` `gpt-6-sol` `gpt-6-luna` `textract-detect` `textract-analyze` `bda`입니다. GPT 모델은 이미지만 받으므로 PDF는 PNG·JPEG로 바꿔서 넣어 주세요.
 
 결과는 `results/eval_<시각>/` 폴더에 저장됩니다.
 
 | 파일 | 내용 |
 |---|---|
-| `summary.csv` | 엔진별 평균 정확도·시간·비용 |
-| `per_document.csv` | 문서 × 엔진별 결과 |
+| `summary.csv` | 엔진별 평균 정확도·시간·토큰·비용 |
+| `per_document.csv` | 문서 × 엔진 × 회차별 결과. 입력·캐시·출력 토큰과 비용을 호출마다 기록 |
 | `mismatches.csv` | 정답과 다른 필드 목록 |
 
 ### 4. 화면에서 보기와 사람 검수
@@ -138,18 +141,30 @@ AI 도구는 다음 순서로 진행합니다.
 
 ## 비용과 데이터 처리
 
-- 표시되는 비용은 **us-east-1 공개 단가 기준 추정치**입니다. 실제 청구액은 AWS Billing에서 확인하세요.
-- 참고로 문서 한 장당 대략 다음과 같습니다.
+비용은 Bedrock 응답에 담긴 토큰 수로 호출마다 계산합니다.
 
-| 엔진 | 페이지당 비용 |
-|---|---|
-| Claude Sonnet 5.5 | 약 $0.02 |
-| Claude Haiku 5.5 | 약 $0.002 |
-| Textract + LLM | 약 $0.04~0.11 |
-| BDA Standard + LLM | 약 $0.05 |
+```
+비용 = 입력 토큰 × 입력 단가 + 캐시 쓰기 토큰 × 캐시 쓰기 단가
+     + 캐시 읽기 토큰 × 캐시 읽기 단가 + 출력 토큰 × 출력 단가  (+ Textract·BDA 페이지 요금)
+```
 
+- 단가는 [`shared/config.py`](shared/config.py)에 있습니다. 온디맨드 공개 단가(Global 교차 리전, 2026-10-27 확인)이며, 서울과 미국 동부 리전이 같습니다. `OCR_MODEL_SCOPE`가 `global`이 아니면 10% 높은 지역 단가로 계산합니다.
+- GPT 모델은 같은 프롬프트 앞부분을 자동으로 캐시합니다. 같은 이미지를 반복해서 돌리면 캐시 할인이 적용돼 실제보다 싸게 보이므로, 캐시가 없을 때의 비용도 `cost_uncached_usd`에 함께 남깁니다.
+- 세금, 할인, 사람 검수 인건비는 포함하지 않습니다. 실제 청구액은 AWS Billing에서 확인하세요.
+- 참고로 제주항공 비행일지 샘플 1장(필드 83개)에서 측정한 값은 다음과 같습니다(2026-10-27, 3~8회 평균).
+
+| 엔진 | 입력 / 출력 토큰 | 페이지당 비용 |
+|---|---|---|
+| Claude Sonnet 5.5 | 6,220 / 943 | $0.022 |
+| Claude Opus 5.5 | 6,220 / 1,875 | $0.062 |
+| Claude Haiku 5.5 | 6,220 / 3,942 | $0.003 |
+| GPT-6.1 Terra | 4,693 / 1,786 | $0.015 |
+| GPT-6 Astra | 4,684 / 2,578 | $0.187 |
+| Textract 텍스트 추출 + Sonnet 5.5 | 5,028 / 3,301 | $0.045 |
+
+  문서 양식과 뽑는 항목 수에 따라 출력 토큰이 달라지므로, 자사 문서로 다시 측정해 보세요.
 - `OCR_MODEL_SCOPE=global`이면 Bedrock 요청이 다른 리전에서 처리될 수 있습니다. 사내 데이터 정책을 먼저 확인하세요.
-- Textract와 BDA의 문서 처리는 한글을 공식 지원하지 않습니다. 한글 손글씨는 Claude가 이미지를 직접 읽는 방식으로 처리합니다.
+- Textract와 BDA의 문서 처리는 한글을 공식 지원하지 않습니다. 한글 손글씨는 Claude·GPT 모델이 이미지를 직접 읽는 방식으로 처리합니다.
 - 샘플 몇 장의 결과는 운영 정확도를 보장하지 않습니다. 필체와 스캔 품질이 다양한 문서로 확인하세요.
 - 같은 문서도 실행할 때마다 결과가 조금 달라질 수 있습니다. 예를 들어 7과 2가 헷갈리는 글씨는 한 번은 맞고 다음엔 틀리기도 합니다. 정확도를 비교할 때는 문서 수를 늘리고 여러 번 돌려 보세요.
 

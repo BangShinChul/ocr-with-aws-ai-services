@@ -1,49 +1,59 @@
 from .config import API_COSTS, POSTPROCESSING_MODEL
 
+def bedrock_cost_breakdown(model_id, token_usage):
+    """
+    Cost of one Bedrock call from the token counts in the API response.
+
+    cost = input x input price + cache write x cache-write price + cache read x cache-read price
+           + output x output price
+
+    Returns a dict with the token counts, the billed cost, and the cost the same call would have
+    without any cache hit ("uncached"): useful when the same test image is sent repeatedly, which
+    makes OpenAI models bill most of the prompt at the cache-read price. Returns None when the
+    model has no price entry.
+    """
+    prices = API_COSTS.get('bedrock', {}).get(model_id)
+    if not token_usage or not prices:
+        return None
+    tin = token_usage.get('inputTokens', 0) or 0
+    tout = token_usage.get('outputTokens', 0) or 0
+    tcw = token_usage.get('cacheWriteInputTokens', 0) or 0
+    tcr = token_usage.get('cacheReadInputTokens', 0) or 0
+    billed = (tin * prices['input'] + tcw * prices['cache_write'] + tcr * prices['cache_read']
+              + tout * prices['output']) / 1000
+    # Without a cache hit the cached prefix is written again (OpenAI) or read as plain input.
+    first_rate = prices['cache_write'] if (tcw or tcr) else prices['input']
+    uncached = (tin * prices['input'] + (tcw + tcr) * first_rate + tout * prices['output']) / 1000
+    return {"input_tokens": tin, "cache_write_tokens": tcw, "cache_read_tokens": tcr,
+            "output_tokens": tout, "cost": billed, "cost_uncached": uncached, "prices_per_1k": prices}
+
+
 def calculate_bedrock_cost(model_id, token_usage):
     """
     Calculate the cost of a Bedrock API call
-    
-    Args:
-        model_id: The Bedrock model ID
-        token_usage: Token usage dictionary
-    
+
     Returns:
-        Tuple of (HTML representation of cost, actual cost value)
+        Tuple of (HTML representation of cost, billed cost value)
     """
-    if not token_usage:
-        return '<div class="cost-none">No cost data available</div>', 0.0
-    
-    # Get cost per token for the model from the nested structure
-    if model_id not in API_COSTS.get('bedrock', {}):
+    b = bedrock_cost_breakdown(model_id, token_usage)
+    if b is None:
         return '<div class="cost-none">No cost data available for this model</div>', 0.0
-    
-    # Get cost per token for the model from the correct structure
-    model_costs = API_COSTS['bedrock'][model_id]
-    cost_per_1k_input = model_costs['input']
-    cost_per_1k_output = model_costs['output']
-    
-    # Calculate cost
-    input_tokens = token_usage.get('inputTokens', 0)
-    output_tokens = token_usage.get('outputTokens', 0)
-    
-    input_cost = (input_tokens / 1000) * cost_per_1k_input
-    output_cost = (output_tokens / 1000) * cost_per_1k_output
-    total_cost = input_cost + output_cost
-    
-    # Format HTML output
+    p = b["prices_per_1k"]
+    cache_line = ""
+    if b["cache_write_tokens"] or b["cache_read_tokens"]:
+        cache_line = (f'<br><span>{b["cache_write_tokens"]} cache-write tokens (${p["cache_write"]:.6f}/1K), '
+                      f'{b["cache_read_tokens"]} cache-read tokens (${p["cache_read"]:.6f}/1K). '
+                      f'Without a cache hit: ${b["cost_uncached"]:.6f}</span>')
     html = f'''
     <div class="cost-container">
-        <div class="cost-total">${total_cost:.6f} total</div>
+        <div class="cost-total">${b["cost"]:.6f} total</div>
         <div class="cost-breakdown">
-            <span>${input_cost:.6f} for {input_tokens} input tokens (${cost_per_1k_input:.6f}/1K tokens)</span><br>
-            <span>${output_cost:.6f} for {output_tokens} output tokens (${cost_per_1k_output:.6f}/1K tokens)</span>
+            <span>{b["input_tokens"]} input tokens (${p["input"]:.6f}/1K tokens)</span><br>
+            <span>{b["output_tokens"]} output tokens (${p["output"]:.6f}/1K tokens)</span>{cache_line}
         </div>
     </div>
     '''
-    
-    # Return both the HTML and the actual cost value
-    return html, total_cost
+    return html, b["cost"]
 
 
 def calculate_textract_cost(operation_type='textract_detect', page_count=1):

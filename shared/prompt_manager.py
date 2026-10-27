@@ -54,10 +54,13 @@ def process_text_with_llm(text, output_schema=None):
         
         # Extract text and token usage
         structured_text = ""
+        usage = response.get('usage', {})
         token_usage = {
-            'inputTokens': response.get('usage', {}).get('inputTokens', 0),
-            'outputTokens': response.get('usage', {}).get('outputTokens', 0),
-            'totalTokens': response.get('usage', {}).get('totalTokens', 0)
+            'inputTokens': usage.get('inputTokens', 0),
+            'outputTokens': usage.get('outputTokens', 0),
+            'totalTokens': usage.get('totalTokens', 0),
+            'cacheReadInputTokens': usage.get('cacheReadInputTokens', 0) or 0,
+            'cacheWriteInputTokens': usage.get('cacheWriteInputTokens', 0) or 0,
         }
         
         logger.info(f"Token usage - Input: {token_usage['inputTokens']}, Output: {token_usage['outputTokens']}")

@@ -31,6 +31,22 @@
       ]
     },
     {
+      "Sid": "BedrockOpenAIOptional",
+      "Effect": "Allow",
+      "Action": ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
+      "Resource": [
+        "arn:aws:bedrock:*:*:inference-profile/*.openai.gpt-*",
+        "arn:aws:bedrock:*::foundation-model/openai.gpt-*",
+        "arn:aws:bedrock:::foundation-model/openai.gpt-*"
+      ]
+    },
+    {
+      "Sid": "MarketplaceFirstUseOfThirdPartyModels",
+      "Effect": "Allow",
+      "Action": ["aws-marketplace:ViewSubscriptions", "aws-marketplace:Subscribe"],
+      "Resource": "*"
+    },
+    {
       "Sid": "BedrockListProfilesForSetupCheck",
       "Effect": "Allow",
       "Action": "bedrock:ListInferenceProfiles",

@@ -46,6 +46,11 @@ _MODEL_FAMILIES = {
     "Claude Opus 5.5": "anthropic.claude-opus-5-5",
     "Claude Sonnet 5.5": "anthropic.claude-sonnet-5-5",
     "Claude Haiku 5.5": "anthropic.claude-haiku-5-5",
+    "GPT-6.1 Sol": "openai.gpt-6.1-sol",
+    "GPT-6.1 Terra": "openai.gpt-6.1-terra",
+    "GPT-6 Astra": "openai.gpt-6-astra",
+    "GPT-6 Sol": "openai.gpt-6-sol",
+    "GPT-6 Luna": "openai.gpt-6-luna",
 }
 BEDROCK_MODELS = {name: f"{MODEL_SCOPE}.{base}" for name, base in _MODEL_FAMILIES.items()}
 DEFAULT_BEDROCK_MODEL = "Claude Sonnet 5.5"
@@ -88,29 +93,38 @@ SERVER_PORT = int(_env_str("OCR_PORT", "7860"))
 MAX_IMAGE_SIZE = 5 * 1024 * 1024 - 100000  # 5MB minus buffer for Bedrock
 
 # ---------------------------------------------------------------------------
-# Cost estimates (USD). Reference list prices from the AWS Price List API, us-east-1,
-# on-demand, checked 2026-10-26. Other Regions and discounts are not reflected.
+# Cost estimates (USD, on-demand list prices, Standard tier, checked 2026-10-27).
+#   Claude, Textract, BDA: AWS Price List API (ap-northeast-2 and us-east-1 are the same).
+#   GPT: Amazon Bedrock model cards (docs.aws.amazon.com/bedrock/latest/userguide/model-cards-openai.html).
+# Discounts, tax and other Regions are not reflected.
 # ---------------------------------------------------------------------------
-# Bedrock values are USD per 1,000 tokens (the calculators divide token counts by 1,000).
+# Global cross-Region prices in USD per 1M tokens: (input, output, cache write, cache read).
+# OpenAI models cache repeated prompt prefixes automatically and report them as cache tokens.
 _GLOBAL_TOKEN_PRICES = {
-    "anthropic.claude-opus-5-5": (0.004, 0.020),     # $4.00 / $20.00 per 1M tokens
-    "anthropic.claude-sonnet-5-5": (0.002, 0.010),   # $2.00 / $10.00 per 1M tokens
-    "anthropic.claude-haiku-5-5": (0.0001, 0.0005),  # $0.10 / $0.50 per 1M tokens
+    "anthropic.claude-opus-5-5": (4.00, 20.00, 5.00, 0.40),
+    "anthropic.claude-sonnet-5-5": (2.00, 10.00, 2.50, 0.10),
+    "anthropic.claude-haiku-5-5": (0.10, 0.50, 0.125, 0.01),
+    "openai.gpt-6.1-sol": (2.00, 10.00, 2.50, 0.10),
+    "openai.gpt-6.1-terra": (1.00, 5.00, 1.25, 0.05),
+    "openai.gpt-6-astra": (10.00, 50.00, 12.50, 1.00),
+    "openai.gpt-6-sol": (2.00, 10.00, 2.50, 0.20),
+    "openai.gpt-6-luna": (0.10, 0.50, 0.125, 0.01),
 }
 # Geographic (non-global) profiles are listed at 10% above the global tier.
-_SCOPE_MULTIPLIER = 1.0 if MODEL_SCOPE == "global" else 1.1
 
 
 def _bedrock_prices():
-    prices = {}
-    for base, (inp, out) in _GLOBAL_TOKEN_PRICES.items():
-        prices[f"{MODEL_SCOPE}.{base}"] = {"input": inp * _SCOPE_MULTIPLIER, "output": out * _SCOPE_MULTIPLIER}
-    custom = POSTPROCESSING_MODEL
-    if custom not in prices:
-        for base, (inp, out) in _GLOBAL_TOKEN_PRICES.items():
-            if custom.endswith(base):
-                mult = 1.0 if custom.startswith("global.") else 1.1
-                prices[custom] = {"input": inp * mult, "output": out * mult}
+    """Per-1K-token prices for every model id the app may call (scope prefix included)."""
+    def entry(base, model_id):
+        inp, out, cache_write, cache_read = _GLOBAL_TOKEN_PRICES[base]
+        mult = 1.0 if model_id.startswith("global.") else 1.1
+        return {"input": inp / 1000 * mult, "output": out / 1000 * mult,
+                "cache_write": cache_write / 1000 * mult, "cache_read": cache_read / 1000 * mult}
+
+    prices = {f"{MODEL_SCOPE}.{base}": entry(base, f"{MODEL_SCOPE}.{base}") for base in _GLOBAL_TOKEN_PRICES}
+    for base in _GLOBAL_TOKEN_PRICES:
+        if POSTPROCESSING_MODEL.endswith(base):
+            prices.setdefault(POSTPROCESSING_MODEL, entry(base, POSTPROCESSING_MODEL))
     return prices
 
 

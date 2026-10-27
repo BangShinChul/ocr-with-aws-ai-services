@@ -12,6 +12,10 @@ engines, compares the result with the human-verified truth field by field, and w
 Usage:
     ./run.sh evaluate                                   # default engines
     ./run.sh evaluate --engines sonnet haiku textract-detect
+    ./run.sh evaluate --engines sonnet gpt-6.1-terra --repeat 3
+
+Cost per call = input tokens x input price + cache tokens x cache prices + output tokens x output
+price, using the token counts in each Bedrock response (prices in shared/config.py).
     ./run.sh evaluate --only scan_01.png --details
 """
 import shared.env  # noqa: F401  (load .env first)
@@ -28,14 +32,23 @@ from engines.bda_engine import BDAEngine
 from engines.bedrock_engine import BedrockEngine
 from engines.textract_engine import TextractAnalyzeEngine, TextractDetectEngine
 from shared.config import BDA_ENABLED, BEDROCK_MODELS, DATA_DIR, POSTPROCESSING_MODEL, S3_BUCKET, logger
-from shared.cost_calculator import calculate_bda_cost, calculate_bedrock_cost
+from shared.cost_calculator import bedrock_cost_breakdown, calculate_bda_cost
 from shared.evaluator import get_detailed_accuracy
 from shared.paths import document_path, list_documents, read_text_if_exists, results_dir, schema_path, truth_path
 
+# Image-reading models: CLI key -> display name in BEDROCK_MODELS.
+MODEL_ENGINES = {
+    "opus": "Claude Opus 5.5",
+    "sonnet": "Claude Sonnet 5.5",
+    "haiku": "Claude Haiku 5.5",
+    "gpt-6.1-sol": "GPT-6.1 Sol",
+    "gpt-6.1-terra": "GPT-6.1 Terra",
+    "gpt-6-astra": "GPT-6 Astra",
+    "gpt-6-sol": "GPT-6 Sol",
+    "gpt-6-luna": "GPT-6 Luna",
+}
 ENGINES = {
-    "opus": "Claude Opus 5.5 (image)",
-    "sonnet": "Claude Sonnet 5.5 (image)",
-    "haiku": "Claude Haiku 5.5 (image)",
+    **{key: f"{name} (image)" for key, name in MODEL_ENGINES.items()},
     "textract-detect": "Textract DetectDocumentText + LLM",
     "textract-analyze": "Textract AnalyzeDocument + LLM",
     "bda": "BDA Standard + LLM",
@@ -43,26 +56,34 @@ ENGINES = {
 DEFAULT_ENGINES = ["sonnet", "haiku", "textract-detect"]
 
 
+def _llm_cost(model_id, token_usage):
+    """Token counts and costs for one LLM call (zeros when there was no call)."""
+    b = bedrock_cost_breakdown(model_id, token_usage) or {}
+    return {"input_tokens": b.get("input_tokens", 0), "cache_write_tokens": b.get("cache_write_tokens", 0),
+            "cache_read_tokens": b.get("cache_read_tokens", 0), "output_tokens": b.get("output_tokens", 0),
+            "llm_cost": b.get("cost", 0.0), "llm_cost_uncached": b.get("cost_uncached", 0.0)}
+
+
 def run_engine(key, path, schema, doc_type):
-    """Return (json, seconds, cost_usd, error)."""
-    if key in ("opus", "sonnet", "haiku"):
-        model_id = BEDROCK_MODELS[f"Claude {key.capitalize()} 5.5"]
+    """Return (json, seconds, cost dict, error)."""
+    if key in MODEL_ENGINES:
+        model_id = BEDROCK_MODELS[MODEL_ENGINES[key]]
         r = BedrockEngine().process_image(str(path), {"model_id": model_id, "document_type": doc_type,
                                                        "output_schema": schema})
-        _, cost = calculate_bedrock_cost(model_id, r.get("token_usage"))
+        c, service = _llm_cost(model_id, r.get("token_usage")), 0.0
     elif key.startswith("textract"):
         engine = TextractDetectEngine() if key == "textract-detect" else TextractAnalyzeEngine()
         r = engine.process_image(str(path), {"output_schema": schema, "s3_bucket": S3_BUCKET})
-        _, llm = calculate_bedrock_cost(POSTPROCESSING_MODEL, r.get("token_usage"))
-        cost = (r.get("textract_cost") or 0) + llm
+        c, service = _llm_cost(POSTPROCESSING_MODEL, r.get("token_usage")), r.get("textract_cost") or 0.0
     else:
         r = BDAEngine().process_image(str(path), {"s3_bucket": S3_BUCKET, "output_schema": schema,
                                                   "document_type": doc_type, "use_blueprint": False})
-        _, bda = calculate_bda_cost(False, "document", 1)
-        _, llm = calculate_bedrock_cost(POSTPROCESSING_MODEL, r.get("token_usage"))
-        cost = bda + llm
+        c, service = _llm_cost(POSTPROCESSING_MODEL, r.get("token_usage")), calculate_bda_cost(False, "document", 1)[1]
+    c["service_cost"] = service  # Textract / BDA per-page charge
+    c["cost_usd"] = service + c.pop("llm_cost")
+    c["cost_uncached_usd"] = service + c.pop("llm_cost_uncached")
     error = r.get("text") if r.get("operation_type") == "error" or not r.get("json") else None
-    return r.get("json"), float(r.get("process_time") or 0), cost, error
+    return r.get("json"), float(r.get("process_time") or 0), c, error
 
 
 def main():
@@ -71,6 +92,7 @@ def main():
     parser.add_argument("--only", nargs="+", help="Evaluate only these file names")
     parser.add_argument("--doc-type", default="form", help="generic | form | receipt | table | handwritten")
     parser.add_argument("--details", action="store_true", help="Print mismatched fields to the console")
+    parser.add_argument("--repeat", type=int, default=1, help="Run each engine N times per document")
     args = parser.parse_args()
 
     if "bda" in args.engines and (not BDA_ENABLED or not S3_BUCKET):
@@ -97,22 +119,30 @@ def main():
         schema = read_text_if_exists(schema_path(name))
         if not schema:
             print(f"  ! {name}: no schema file — field names may not match the truth file")
-        for key in args.engines:
+        for key, run_no in ((k, n) for k in args.engines for n in range(1, args.repeat + 1)):
             label = ENGINES[key]
-            extracted, secs, cost, error = run_engine(key, document_path(name), schema, args.doc_type)
+            extracted, secs, c, error = run_engine(key, document_path(name), schema, args.doc_type)
             detail = get_detailed_accuracy(extracted or {}, truth)
-            (out / "raw" / f"{name}__{key}.json").write_text(
+            suffix = f"__run{run_no}" if args.repeat > 1 else ""
+            (out / "raw" / f"{name}__{key}{suffix}.json").write_text(
                 json.dumps(extracted, ensure_ascii=False, indent=2), encoding="utf-8")
-            per_doc.append({"document": name, "engine": label, "accuracy_pct": detail["total_accuracy"],
+            per_doc.append({"document": name, "engine": label, "run": run_no,
+                            "accuracy_pct": detail["total_accuracy"],
                             "matched": detail.get("matches", 0), "fields": detail.get("total", 0),
-                            "seconds": round(secs, 1), "cost_usd": round(cost, 5), "error": error or ""})
+                            "seconds": round(secs, 1),
+                            "input_tokens": c["input_tokens"], "cache_write_tokens": c["cache_write_tokens"],
+                            "cache_read_tokens": c["cache_read_tokens"], "output_tokens": c["output_tokens"],
+                            "service_cost_usd": round(c["service_cost"], 6),
+                            "cost_usd": round(c["cost_usd"], 6), "cost_uncached_usd": round(c["cost_uncached_usd"], 6),
+                            "error": error or ""})
             for f in detail["field_details"]:
                 if not f["match"]:
-                    mismatches.append({"document": name, "engine": label, "field": f["field"],
+                    mismatches.append({"document": name, "engine": label, "run": run_no, "field": f["field"],
                                        "expected": f["expected"], "extracted": f["extracted"]})
             flag = f"  ERROR: {str(error)[:120]}" if error else ""
-            print(f"  {name:<28} {label:<36} {detail['total_accuracy']:>6.1f}%  "
-                  f"{secs:>5.1f}s  ${cost:.4f}{flag}")
+            prompt = c["input_tokens"] + c["cache_write_tokens"] + c["cache_read_tokens"]
+            print(f"  {name:<28} {label:<28} {detail['total_accuracy']:>6.1f}%  {secs:>5.1f}s  "
+                  f"tok {prompt}/{c['output_tokens']}  ${c['cost_usd']:.4f}{flag}")
             if args.details:
                 for f in detail["field_details"]:
                     if not f["match"]:
@@ -122,12 +152,16 @@ def main():
     for key in args.engines:
         rows = [r for r in per_doc if r["engine"] == ENGINES[key]]
         summary.append({
-            "engine": ENGINES[key], "documents": len(rows),
+            "engine": ENGINES[key], "documents": len({r["document"] for r in rows}), "runs": len(rows),
             "mean_accuracy_pct": round(mean(r["accuracy_pct"] for r in rows), 2),
             "min_accuracy_pct": min(r["accuracy_pct"] for r in rows),
             "field_accuracy_pct": round(100 * sum(r["matched"] for r in rows) / max(1, sum(r["fields"] for r in rows)), 2),
             "mean_seconds": round(mean(r["seconds"] for r in rows), 1),
+            "mean_prompt_tokens": round(mean(r["input_tokens"] + r["cache_write_tokens"] + r["cache_read_tokens"]
+                                             for r in rows)),
+            "mean_output_tokens": round(mean(r["output_tokens"] for r in rows)),
             "mean_cost_usd": round(mean(r["cost_usd"] for r in rows), 5),
+            "mean_cost_uncached_usd": round(mean(r["cost_uncached_usd"] for r in rows), 5),
             "total_cost_usd": round(sum(r["cost_usd"] for r in rows), 4),
         })
 
@@ -138,12 +172,17 @@ def main():
                 w.writeheader()
                 w.writerows(rows)
 
-    print(f"\n{'engine':<36} {'docs':>4} {'mean acc':>9} {'field acc':>9} {'sec':>6} {'$/doc':>8}")
+    print(f"\n{'engine':<32} {'runs':>4} {'mean acc':>9} {'field acc':>9} {'sec':>6} {'tok in/out':>12} "
+          f"{'$/call':>8} {'$ no-cache':>10}")
     for s in summary:
-        print(f"{s['engine']:<36} {s['documents']:>4} {s['mean_accuracy_pct']:>8.1f}% "
-              f"{s['field_accuracy_pct']:>8.1f}% {s['mean_seconds']:>6.1f} {s['mean_cost_usd']:>8.4f}")
+        toks = f"{s['mean_prompt_tokens']}/{s['mean_output_tokens']}"
+        print(f"{s['engine']:<32} {s['runs']:>4} {s['mean_accuracy_pct']:>8.1f}% "
+              f"{s['field_accuracy_pct']:>8.1f}% {s['mean_seconds']:>6.1f} {toks:>12} "
+              f"{s['mean_cost_usd']:>8.4f} {s['mean_cost_uncached_usd']:>10.4f}")
     print(f"\nReports: {out}  ({time.time() - started:.0f}s)")
-    print("Costs are estimates from us-east-1 list prices; check your bill for actual charges.")
+    print("Costs: response token counts x on-demand list prices in shared/config.py. '$ no-cache' is the "
+          "cost without a prompt-cache hit (repeat runs of one image hit the cache on GPT models). "
+          "Check AWS Billing for actual charges.")
 
 
 if __name__ == "__main__":

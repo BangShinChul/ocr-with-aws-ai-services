@@ -53,6 +53,16 @@ class BedrockEngine(OCREngine):
         
         # Check if input is a PDF file
         is_pdf = self._is_pdf_input(image)
+        if is_pdf and ".openai." in f".{model_id}":
+            # The PDF path below sends an Anthropic document block; OpenAI models on Bedrock
+            # accept text and image blocks only (see the model card).
+            return {
+                "text": "Amazon Bedrock Error: GPT models accept images only. Convert the PDF pages "
+                        "to PNG/JPEG first, or use a Claude model for PDF input.",
+                "json": None, "image": None, "process_time": 0.0,
+                "token_usage": {'inputTokens': 0, 'outputTokens': 0, 'totalTokens': 0},
+                "model_id": model_id, "operation_type": "error", "pages": 0,
+            }
         
         if is_pdf:
             # Handle PDF files - copy to temp with clean name
@@ -193,10 +203,15 @@ class BedrockEngine(OCREngine):
                     extracted_text = ""
                     
                     # Extract token usage information
+                    usage = response.get('usage', {})
                     token_usage = {
-                        'inputTokens': response.get('usage', {}).get('inputTokens', 0),
-                        'outputTokens': response.get('usage', {}).get('outputTokens', 0),
-                        'totalTokens': response.get('usage', {}).get('totalTokens', 0)
+                        'inputTokens': usage.get('inputTokens', 0),
+                        'outputTokens': usage.get('outputTokens', 0),
+                        'totalTokens': usage.get('totalTokens', 0),
+                        # Prompt tokens served from or written to the prompt cache are billed
+                        # separately and are not part of inputTokens.
+                        'cacheReadInputTokens': usage.get('cacheReadInputTokens', 0) or 0,
+                        'cacheWriteInputTokens': usage.get('cacheWriteInputTokens', 0) or 0,
                     }
                     
                     logger.info(f"Token usage - Input: {token_usage['inputTokens']}, Output: {token_usage['outputTokens']}, Total: {token_usage['totalTokens']}")
@@ -311,47 +326,9 @@ class BedrockEngine(OCREngine):
                 }
     
     def get_cost(self, result: Dict[str, Any]) -> Tuple[str, float]:
-        """
-        Calculate the cost for Bedrock processing
-        
-        Args:
-            result: Result dictionary from process_image
-            
-        Returns:
-            Tuple of (HTML representation of cost, actual cost value)
-        """
-        token_usage = result.get('token_usage')
-        model_id = result.get('model_id', '')
-        
-        if not token_usage or model_id not in API_COSTS.get('bedrock', {}):
-            return '<div class="cost-none">No cost data available</div>', 0.0
-            
-        # Get cost per token for the model from the correct structure
-        model_costs = API_COSTS['bedrock'][model_id]
-        cost_per_1k_input = model_costs['input']
-        cost_per_1k_output = model_costs['output']
-        
-        # Calculate cost
-        input_tokens = token_usage.get('inputTokens', 0)
-        output_tokens = token_usage.get('outputTokens', 0)
-        
-        input_cost = (input_tokens / 1000) * cost_per_1k_input
-        output_cost = (output_tokens / 1000) * cost_per_1k_output
-        total_cost = input_cost + output_cost
-        
-        # Format HTML output
-        html = f'''
-        <div class="cost-container">
-            <div class="cost-total">${total_cost:.6f} total</div>
-            <div class="cost-breakdown">
-                <span>${input_cost:.6f} for {input_tokens} input tokens (${cost_per_1k_input:.6f}/1K tokens)</span><br>
-                <span>${output_cost:.6f} for {output_tokens} output tokens (${cost_per_1k_output:.6f}/1K tokens)</span>
-            </div>
-        </div>
-        '''
-        
-        # Return both the HTML and the actual cost value
-        return html, total_cost
+        """Cost for Bedrock processing: (HTML, billed USD) from the response token counts."""
+        from shared.cost_calculator import calculate_bedrock_cost
+        return calculate_bedrock_cost(result.get('model_id', ''), result.get('token_usage'))
     
     def _is_pdf_input(self, image):
         """Check if input is a PDF file"""
