@@ -4,6 +4,7 @@ import datetime
 from shared.config import CUSTOM_THEME, logger, SERVER_HOST, SERVER_PORT, BDA_ENABLED, AWS_PROFILE, AWS_REGION, MODEL_SCOPE
 from ui import create_input_panel, create_common_options_panel, create_results_panel, create_results_table
 from event_handler import setup_event_handlers
+from pipeline_ui import build_pipeline_section
 
 def create_ocr_app():
     """Create the OCR application with all components"""
@@ -47,6 +48,9 @@ def create_ocr_app():
                 # Results panel with tabs for each engine
                 results_panel, input_components, output_components = create_results_panel()
         
+        # Deployed serverless pipeline (infra/): upload and human review
+        build_pipeline_section()
+
         # Insert global status at the beginning of output components
         output_components.insert(0, global_status)
         

@@ -104,6 +104,10 @@ http://127.0.0.1:7860 을 엽니다.
   - 한글 값 (Textract로 교차 확인할 수 없음)
 - 확정 값을 고쳐 저장하면 `results/reviewed/`에 수정 이력과 함께 남습니다.
 
+### 5. 운영 형태로 돌려 보기 (선택)
+
+[`infra/`](infra/README.md)에는 같은 판독·검산·사람 검수 흐름을 서버리스로 구성한 AWS CDK(Python) 스택이 있습니다. S3에 올리면 자동으로 처리하고, 검산에 걸린 문서만 검수 대기열에 올립니다. 공개 엔드포인트 없이 동작하며, 검수는 이 앱의 **서버리스 파이프라인** 영역이나 `./run.sh pipeline` 명령으로 합니다.
+
 ## AI 코딩 도구로 설치하기 (Kiro · Claude Code · Codex)
 
 이 저장소를 연 상태에서 아래처럼 요청하면 됩니다.
@@ -182,6 +186,9 @@ app.py / ui.py / event_handler.py    웹 화면 (Gradio)
 evaluate.py                          일괄 정확도 측정
 engines/                             Textract · Bedrock · BDA 호출
 shared/review.py                     사람 검수 대상 선별 (검산 규칙, 엔진 비교, 신뢰도)
+shared/prompts.py                    판독 프롬프트 (데모 앱과 Lambda가 같이 사용)
+pipeline_client.py / pipeline_ui.py  배포한 파이프라인용 업로드·검수 클라이언트
+infra/                               서버리스 파이프라인 CDK 스택 (선택)
 scripts/setup_env.py                 점검·버킷·.env 작성
 setup.sh / setup.ps1 / run.sh / run.ps1
 examples/                            스키마·정답 예시 (가상 데이터)

@@ -13,3 +13,10 @@ data/schema/*
 data/truth/*
 !data/**/.gitkeep
 results/
+
+# CDK
+infra/cdk.out/
+infra/.build/
+infra/cdk.context.json
+.pytest_cache/
+infra/node_modules/

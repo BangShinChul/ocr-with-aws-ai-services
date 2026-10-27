@@ -1,0 +1,8 @@
+{
+  "name": "ocr-pipeline-infra",
+  "private": true,
+  "description": "Pins the AWS CDK CLI used by deploy.sh / deploy.ps1",
+  "devDependencies": {
+    "aws-cdk": "2.1146.1"
+  }
+}

@@ -65,10 +65,26 @@ Follow the steps in order. Stop and ask when a step says so.
 8. **Clean up when the PoC ends.** Delete `data/`, `results/`, `.env`, and the bucket if setup created
    it (`aws s3 rb s3://<bucket> --force --profile <p>` — irreversible; confirm first).
 
+## Optional: the serverless pipeline (`infra/`)
+
+Only when the user asks to deploy it. Read `infra/README.md` first.
+
+1. Confirm the account (`aws sts get-caller-identity --profile <p>`) is the PoC account, not production.
+2. Run `cd infra && ./deploy.sh --profile <p> --region <r> --diff` and show the user the resource list
+   and the exposure table in `infra/README.md` (no public endpoint, no VPC, no public IP, private buckets).
+3. Deploy only after the user explicitly approves. Never pass `--yes` on their behalf.
+4. Verify with one document: `./run.sh pipeline schema ...`, `./run.sh pipeline upload ...`,
+   `./run.sh pipeline status`; for a flagged document use `pending` / `show` / `approve`.
+5. `./deploy.sh ... --destroy` deletes all scans and results; confirm first.
+6. After changing `infra/`: `cd infra && .venv/bin/python -m pytest -q && node_modules/.bin/cdk synth --quiet`
+   (cdk-nag must pass; acknowledge a finding only with a written reason).
+
 ## Rules
 
-- Do not modify IAM, networking, or any AWS resource beyond the single optional bucket.
+- Do not modify IAM, networking, or any AWS resource beyond the single optional bucket, except by
+  deploying `infra/` after the user approves it as described above.
 - Do not commit or print the contents of `.env`, `data/`, or `results/`.
-- Costs printed by the tools are estimates from us-east-1 list prices.
+- Costs printed by the tools are response token counts x on-demand list prices in `shared/config.py`
+  (estimates; tax and discounts excluded).
 - Code changes: keep the existing style; run `python -m py_compile` on changed files and
   `./run.sh evaluate --only <file>` on one document before reporting success.

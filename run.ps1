@@ -2,6 +2,7 @@
 # .\run.ps1 evaluate [...]     batch accuracy report over data\ (see --help)
 # .\run.ps1 template <file>    empty truth file from data\schema\<file>.json
 # .\run.ps1 check              re-run the AWS preflight check (no changes)
+# .\run.ps1 pipeline <cmd>     deployed pipeline: upload | status | pending | show | approve | reject | result
 $ErrorActionPreference = "Stop"
 Set-Location -Path $PSScriptRoot
 
@@ -16,6 +17,7 @@ switch ($cmd) {
     "evaluate" { & $venvPy evaluate.py @rest }
     "template" { & $venvPy scripts\make_truth_template.py @rest }
     "check"    { & $venvPy scripts\setup_env.py --check-only @rest }
-    default    { Write-Error "Unknown command: $cmd (use ui | evaluate | template | check)"; exit 1 }
+    "pipeline" { & $venvPy pipeline_client.py @rest }
+    default    { Write-Error "Unknown command: $cmd (use ui | evaluate | template | check | pipeline)"; exit 1 }
 }
 exit $LASTEXITCODE
